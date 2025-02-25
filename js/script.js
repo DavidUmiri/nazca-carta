@@ -1,7 +1,12 @@
-// Asegúrate de que pdfjsLib esté cargado antes de usarlo
+// Verifica que PDF.js esté cargado
 if (typeof pdfjsLib === 'undefined') {
     console.error('PDF.js library is not loaded');
     throw new Error('PDF.js library is not loaded');
+}
+
+// Función para detectar dispositivos móviles
+function isMobile() {
+    return /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 }
 
 const pdfUrl = 'documents/Carta NAZCA-corregida.pdf';
@@ -10,20 +15,22 @@ if (!pdfContainer) {
     throw new Error('No se encontró el contenedor para el PDF');
 }
 
-const pagesToLoad = 1; // Reducido para una carga más rápida inicial
+const pagesToLoad = 1; // Carga una página a la vez para acelerar la carga inicial
 let pdfDocument = null;
 let currentPageNumber = 1;
 let isLoadingPdf = false;
 const pageCache = new Map();
 let observer = null;
-let endMarker = document.createElement('span'); // Cambia 'div' por 'span'
+let endMarker = document.createElement('span'); // Usamos un <span> como marcador
 
 async function renderPage(pageNumber) {
     if (!pdfDocument || pageNumber > pdfDocument.numPages) return;
 
     const page = await pdfDocument.getPage(pageNumber);
-    const scaleFactor = window.devicePixelRatio || (isMobile() ? 0.5 : 1); // Ajusta la escala para dispositivos móviles
-    const scale = (pdfContainer.clientWidth / page.getViewport({ scale: 1 }).width) * scaleFactor;
+    // En móviles forzamos una escala reducida (0.5) para mejorar el rendimiento
+    const scaleFactor = isMobile() ? 0.5 : (window.devicePixelRatio || 1);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const scale = (pdfContainer.clientWidth / baseViewport.width) * scaleFactor;
     const viewport = page.getViewport({ scale });
 
     const canvas = document.createElement('canvas');
@@ -86,7 +93,7 @@ function updateEndMarker() {
     if (endMarker.parentNode) {
         endMarker.remove();
     }
-    endMarker = document.createElement('span'); // Cambia 'div' por 'span'
+    endMarker = document.createElement('span');
     endMarker.id = 'pdf-end-marker';
     pdfContainer.appendChild(endMarker);
 
@@ -109,11 +116,17 @@ async function loadPdf() {
         pdfDocument = await pdfjsLib.getDocument(pdfUrl).promise;
         await loadNextPages();
 
+        // Evita recargar el PDF por cambios mínimos de tamaño en móviles
+        let lastWidth = pdfContainer.clientWidth;
         window.addEventListener('resize', debounce(() => {
-            pageCache.clear();
-            pdfContainer.innerHTML = '';
-            currentPageNumber = 1;
-            loadNextPages();
+            const newWidth = pdfContainer.clientWidth;
+            if (Math.abs(newWidth - lastWidth) > 50) { // Solo recarga si hay un cambio significativo
+                pageCache.clear();
+                pdfContainer.innerHTML = '';
+                currentPageNumber = 1;
+                loadNextPages();
+                lastWidth = newWidth;
+            }
         }, 300));
 
     } catch (error) {
