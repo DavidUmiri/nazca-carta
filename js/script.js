@@ -4,7 +4,7 @@ if (!pdfContainer) {
     throw new Error('No se encontró el contenedor para el PDF');
 }
 
-const pagesToLoad = 3; // Número de páginas a cargar por bloque
+const pagesToLoad = 5; // Número de páginas a cargar por bloque
 let pdfDocument = null;
 let currentPageNumber = 1;
 let isLoadingPdf = false;
