@@ -1,28 +1,24 @@
+// Asegúrate de que pdfjsLib esté cargado antes de usarlo
+if (typeof pdfjsLib === 'undefined') {
+    console.error('PDF.js library is not loaded');
+    throw new Error('PDF.js library is not loaded');
+}
+
 const pdfUrl = 'documents/Carta NAZCA-corregida.pdf';
 const pdfContainer = document.getElementById('pdf-container');
 if (!pdfContainer) {
     throw new Error('No se encontró el contenedor para el PDF');
 }
 
-const pagesToLoad = 5; // Número de páginas a cargar por bloque
+const pagesToLoad = 1; // Reducido para una carga más rápida inicial
 let pdfDocument = null;
 let currentPageNumber = 1;
 let isLoadingPdf = false;
-const canvasPool = new Map();
+const pageCache = new Map();
 let observer = null;
-let endMarker = document.createElement('div');
+let endMarker = document.createElement('span'); // Cambia 'div' por 'span'
 
-function getCanvas(pageNumber) {
-    if (canvasPool.has(pageNumber)) {
-        return canvasPool.get(pageNumber);
-    }
-    const canvas = document.createElement('canvas');
-    canvas.setAttribute('data-page-number', pageNumber);
-    canvasPool.set(pageNumber, canvas);
-    return canvas;
-}
-
-async function loadPage(pageNumber) {
+async function renderPage(pageNumber) {
     if (!pdfDocument || pageNumber > pdfDocument.numPages) return;
 
     const page = await pdfDocument.getPage(pageNumber);
@@ -30,11 +26,8 @@ async function loadPage(pageNumber) {
     const scale = (pdfContainer.clientWidth / page.getViewport({ scale: 1 }).width) * scaleFactor;
     const viewport = page.getViewport({ scale });
 
-    const canvas = getCanvas(pageNumber);
-    if (!pdfContainer.contains(canvas)) {
-        pdfContainer.appendChild(canvas);
-    }
-
+    const canvas = document.createElement('canvas');
+    canvas.setAttribute('data-page-number', pageNumber);
     const context = canvas.getContext('2d', { alpha: false });
 
     canvas.width = viewport.width;
@@ -42,13 +35,28 @@ async function loadPage(pageNumber) {
     canvas.style.width = `${viewport.width / scaleFactor}px`;
     canvas.style.height = `${viewport.height / scaleFactor}px`;
 
-    await page.render({
+    const renderContext = {
         canvasContext: context,
         viewport,
         intent: 'display'
-    }).promise;
+    };
 
-    updateEndMarker();
+    await page.render(renderContext).promise;
+    return canvas;
+}
+
+async function loadPage(pageNumber) {
+    if (pageCache.has(pageNumber)) {
+        const cachedCanvas = pageCache.get(pageNumber);
+        if (!pdfContainer.contains(cachedCanvas)) {
+            pdfContainer.appendChild(cachedCanvas);
+        }
+        return;
+    }
+
+    const canvas = await renderPage(pageNumber);
+    pageCache.set(pageNumber, canvas);
+    pdfContainer.appendChild(canvas);
 }
 
 async function loadNextPages() {
@@ -57,7 +65,7 @@ async function loadNextPages() {
 
     try {
         const pagesToRender = Math.min(pagesToLoad, pdfDocument.numPages - currentPageNumber + 1);
-        const pagePromises = Array.from({ length: pagesToRender }, (_, i) => 
+        const pagePromises = Array.from({ length: pagesToRender }, (_, i) =>
             loadPage(currentPageNumber + i)
         );
 
@@ -78,9 +86,8 @@ function updateEndMarker() {
     if (endMarker.parentNode) {
         endMarker.remove();
     }
-    endMarker = document.createElement('div');
+    endMarker = document.createElement('span'); // Cambia 'div' por 'span'
     endMarker.id = 'pdf-end-marker';
-    endMarker.style.height = '50px'; // Espaciado para detección
     pdfContainer.appendChild(endMarker);
 
     if (observer) {
@@ -92,7 +99,7 @@ function updateEndMarker() {
         if (lastEntry.isIntersecting && !isLoadingPdf) {
             loadNextPages();
         }
-    }, { root: null, rootMargin: '100px', threshold: 0.1 });
+    }, { root: null, rootMargin: '2160px', threshold: 0.01 });
 
     observer.observe(endMarker);
 }
@@ -100,21 +107,30 @@ function updateEndMarker() {
 async function loadPdf() {
     try {
         pdfDocument = await pdfjsLib.getDocument(pdfUrl).promise;
-        loadNextPages();
+        await loadNextPages();
 
-        window.addEventListener('resize', () => {
-            clearTimeout(window.resizingTimeout);
-            window.resizingTimeout = setTimeout(() => {
-                pdfContainer.innerHTML = ''; 
-                canvasPool.clear();
-                currentPageNumber = 1;
-                loadNextPages();
-            }, 300);
-        });
+        window.addEventListener('resize', debounce(() => {
+            pageCache.clear();
+            pdfContainer.innerHTML = '';
+            currentPageNumber = 1;
+            loadNextPages();
+        }, 300));
 
     } catch (error) {
         console.error('Error al cargar el PDF:', error);
     }
+}
+
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
 }
 
 document.addEventListener("DOMContentLoaded", loadPdf);
