@@ -1,124 +1,61 @@
-// Validate and sanitize the PDF URL
-const pdfUrl = new URL('documents/Carta NAZCA-corregida.pdf', window.location.origin).href;
-
-// Ensure we're in a secure context
-if (!window.isSecureContext) {
-    throw new Error('This application requires a secure context (HTTPS)');
-}
-
+const pdfUrl = 'documents/Carta NAZCA-corregida.pdf';
 const pdfContainer = document.getElementById('pdf-container');
 if (!pdfContainer) {
     throw new Error('No se encontró el contenedor para el PDF');
 }
 
-// Use constants for configuration to prevent manipulation
-const CONFIG = Object.freeze({
-    pagesToLoad: 5,
-    maxPages: 1000, // Set a reasonable maximum
-    maxDimension: 4096 // Maximum canvas dimension
-});
-
+const pagesToLoad = 5;
 let currentPageNumber = 1;
 let isLoadingPdf = false;
 const canvasPool = new Map();
 
-function validatePageNumber(pageNumber) {
-    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > CONFIG.maxPages) {
-        throw new Error('Invalid page number');
-    }
-    return pageNumber;
-}
-
-function sanitizeCanvasSize(dimension) {
-    return Math.min(Math.max(1, dimension), CONFIG.maxDimension);
-}
-
 function getCanvas(pageNumber) {
-    validatePageNumber(pageNumber);
-    
     if (canvasPool.has(pageNumber)) {
         return canvasPool.get(pageNumber);
     }
-    
     const canvas = document.createElement('canvas');
-    // Use dataset instead of setAttribute for better XSS protection
-    canvas.dataset.pageNumber = pageNumber;
-    
-    // Prevent canvas from being used as a proxy for fingerprinting
-    canvas.style.imageRendering = 'pixelated';
-    
+    canvas.setAttribute('data-page-number', pageNumber);
     canvasPool.set(pageNumber, canvas);
     return canvas;
 }
 
 async function loadPage(pdfDocument, pageNumber) {
-    try {
-        validatePageNumber(pageNumber);
-        
-        const page = await pdfDocument.getPage(pageNumber);
-        const scale = pdfContainer.clientWidth / page.getViewport({ scale: 1 }).width;
-        const viewport = page.getViewport({ scale });
-        
-        const canvas = getCanvas(pageNumber);
-        
-        // Validate canvas parent before appending
-        if (!pdfContainer.contains(canvas)) {
-            if (canvas.parentNode) {
-                canvas.parentNode.removeChild(canvas);
-            }
-            pdfContainer.appendChild(canvas);
-        }
-        
-        const context = canvas.getContext('2d', { 
-            alpha: false,
-            willReadFrequently: false // Prevent pixel reading attacks
-        });
-        
-        // Sanitize canvas dimensions
-        canvas.height = sanitizeCanvasSize(viewport.height);
-        canvas.width = sanitizeCanvasSize(viewport.width);
-        
-        return page.render({
-            canvasContext: context,
-            viewport,
-            intent: 'display'
-        }).promise;
-    } catch (error) {
-        console.error('Error in loadPage:', error);
-        throw new Error('Failed to load page safely');
+    const page = await pdfDocument.getPage(pageNumber);
+    const scale = pdfContainer.clientWidth / page.getViewport({ scale: 1 }).width;
+    const viewport = page.getViewport({ scale });
+    
+    const canvas = getCanvas(pageNumber);
+    if (!pdfContainer.contains(canvas)) {
+        pdfContainer.appendChild(canvas);
     }
+    
+    const context = canvas.getContext('2d', { alpha: false }); // Optimization for non-transparent PDFs
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+    
+    return page.render({
+        canvasContext: context,
+        viewport,
+        intent: 'display' // Optimize for screen display
+    }).promise;
 }
 
 async function loadNextPages(pdfDocument) {
     if (isLoadingPdf || currentPageNumber > pdfDocument.numPages) return;
-    
-    // Validate document
-    if (!pdfDocument || typeof pdfDocument.numPages !== 'number') {
-        throw new Error('Invalid PDF document');
-    }
-    
     isLoadingPdf = true;
 
     try {
-        const pagesToRender = Math.min(
-            CONFIG.pagesToLoad, 
-            pdfDocument.numPages - currentPageNumber + 1
-        );
-        
-        const pagePromises = Array.from(
-            { length: pagesToRender }, 
-            (_, i) => loadPage(pdfDocument, currentPageNumber + i)
+        const pagesToRender = Math.min(pagesToLoad, pdfDocument.numPages - currentPageNumber + 1);
+        const pagePromises = Array.from({ length: pagesToRender }, (_, i) => 
+            loadPage(pdfDocument, currentPageNumber + i)
         );
         
         await Promise.all(pagePromises);
-        currentPageNumber += CONFIG.pagesToLoad;
+        currentPageNumber += pagesToLoad;
         
         if (currentPageNumber <= pdfDocument.numPages) {
-            // Use safer timeout alternative if requestIdleCallback is not available
-            const scheduleNext = window.requestIdleCallback || 
-                               (cb => setTimeout(cb, 1));
-            
-            scheduleNext(() => loadNextPages(pdfDocument));
+            // Use requestIdleCallback for non-urgent next page loads
+            window.requestIdleCallback(() => loadNextPages(pdfDocument));
         }
     } catch (error) {
         console.error('Error al cargar las páginas:', error);
@@ -129,41 +66,19 @@ async function loadNextPages(pdfDocument) {
 }
 
 try {
-    // Validate PDF URL
-    if (!pdfUrl.startsWith(window.location.origin)) {
-        throw new Error('Invalid PDF URL');
-    }
-
-    pdfjsLib.getDocument(pdfUrl).promise
-        .then(pdfDocument => {
-            // Validate PDF document
-            if (pdfDocument.numPages > CONFIG.maxPages) {
-                throw new Error('PDF exceeds maximum page limit');
-            }
-            
-            loadNextPages(pdfDocument);
-            
-            const observer = setupIntersectionObserver(pdfDocument);
-            
-            // Secure cleanup
-            const cleanup = () => {
-                observer.disconnect();
-                canvasPool.forEach(canvas => {
-                    const ctx = canvas.getContext('2d');
-                    if (ctx) {
-                        ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    }
-                });
-                canvasPool.clear();
-            };
-            
-            window.addEventListener('unload', cleanup, { once: true });
-        })
-        .catch(error => {
-            console.error('Error al cargar el PDF:', error);
-            alert('Ocurrió un error al cargar el PDF.');
+    pdfjsLib.getDocument(pdfUrl).promise.then(pdfDocument => {
+        loadNextPages(pdfDocument);
+        
+        // Use Intersection Observer instead of scroll event
+        const observer = setupIntersectionObserver(pdfDocument);
+        
+        // Cleanup function
+        window.addEventListener('unload', () => {
+            observer.disconnect();
+            canvasPool.clear();
         });
+    });
 } catch (error) {
-    console.error('Error al inicializar:', error);
-    alert('Ocurrió un error al inicializar.');
+    console.error('Error al cargar el PDF:', error);
+    alert('Ocurrió un error al cargar el PDF.');
 }
