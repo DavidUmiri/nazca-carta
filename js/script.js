@@ -22,7 +22,7 @@ async function renderPage(pageNumber) {
     if (!pdfDocument || pageNumber > pdfDocument.numPages) return;
 
     const page = await pdfDocument.getPage(pageNumber);
-    const scaleFactor = window.devicePixelRatio || 1;
+    const scaleFactor = window.devicePixelRatio || (isMobile() ? 0.5 : 1); // Ajusta la escala para dispositivos móviles
     const scale = (pdfContainer.clientWidth / page.getViewport({ scale: 1 }).width) * scaleFactor;
     const viewport = page.getViewport({ scale });
 
