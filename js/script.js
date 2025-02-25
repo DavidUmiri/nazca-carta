@@ -10,7 +10,7 @@ if (!pdfContainer) {
     throw new Error('No se encontró el contenedor para el PDF');
 }
 
-const pagesToLoad = 1; // Reducido para una carga más rápida inicial
+const pagesToLoad = 2; // Reducido para una carga más rápida inicial
 let pdfDocument = null;
 let currentPageNumber = 1;
 let isLoadingPdf = false;
@@ -99,7 +99,7 @@ function updateEndMarker() {
         if (lastEntry.isIntersecting && !isLoadingPdf) {
             loadNextPages();
         }
-    }, { root: null, rootMargin: '2160px', threshold: 0.01 });
+    }, { root: null, rootMargin: '5000px', threshold: 0.01 });
 
     observer.observe(endMarker);
 }
