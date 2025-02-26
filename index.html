@@ -66,13 +66,14 @@
       throw new Error('No se encontró el contenedor para el PDF');
     }
 
-    const pagesToLoad = 2; // Carga dos páginas a la vez para equilibrar rendimiento y experiencia
+    const pagesToLoad = 2; // Carga dos páginas a la vez
     let pdfDocument = null;
     let currentPageNumber = 1;
     let isLoadingPdf = false;
     const pageCache = new Map();
     let observer = null;
-    let endMarker = document.createElement('span'); // Usamos un <span> como marcador
+    let pageObservers = [];
+    let endMarker = document.createElement('span');
 
     async function renderPage(pageNumber) {
       if (!pdfDocument || pageNumber > pdfDocument.numPages) return;
@@ -84,7 +85,6 @@
       const isMobileDevice = isMobile();
 
       // Usamos un factor de escala mayor para móviles para mejorar la calidad
-      // 2.0 para móviles con alta densidad de píxeles, 1.5 para móviles normales
       const mobileScaleFactor = pixelRatio >= 2 ? 2.0 : 1.5;
 
       // Aplicamos el factor de escala adecuado según el dispositivo
@@ -132,6 +132,36 @@
       }
     }
 
+    function setupPageObservers() {
+      // Desconectar observadores existentes
+      if (pageObservers.length > 0) {
+        pageObservers.forEach(obs => obs.disconnect());
+        pageObservers = [];
+      }
+
+      // Configurar un observador para cada página
+      document.querySelectorAll('canvas[data-page-number]').forEach(canvas => {
+        const pageNumber = parseInt(canvas.getAttribute('data-page-number'));
+
+        const observer = new IntersectionObserver(entries => {
+          if (entries[0].isIntersecting) {
+            // Si esta página es visible, asegúrate de que la siguiente esté cargada
+            const nextPageNumber = pageNumber + 1;
+            if (nextPageNumber <= pdfDocument.numPages && !pageCache.has(nextPageNumber)) {
+              loadPage(nextPageNumber);
+            }
+          }
+        }, {
+          root: null,
+          rootMargin: '0px',
+          threshold: 0.1 // Cuando el 10% de la página es visible
+        });
+
+        observer.observe(canvas);
+        pageObservers.push(observer);
+      });
+    }
+
     async function loadNextPages() {
       if (isLoadingPdf || currentPageNumber > pdfDocument.numPages) return;
       isLoadingPdf = true;
@@ -148,6 +178,10 @@
         if (currentPageNumber <= pdfDocument.numPages) {
           updateEndMarker();
         }
+
+        // Configurar observadores para las páginas recién cargadas
+        setupPageObservers();
+
       } catch (error) {
         console.error('Error al cargar las páginas:', error);
       } finally {
@@ -172,7 +206,11 @@
         if (lastEntry.isIntersecting && !isLoadingPdf) {
           loadNextPages();
         }
-      }, { root: null, rootMargin: '300px', threshold: 0.01 });
+      }, {
+        root: null,
+        rootMargin: '500px', // Aumentamos el margen para detectar antes
+        threshold: 0.001 // Usamos un threshold muy pequeño
+      });
 
       observer.observe(endMarker);
     }
@@ -183,6 +221,8 @@
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
 
         pdfDocument = await pdfjsLib.getDocument(pdfUrl).promise;
+
+        // Cargamos las primeras páginas inmediatamente
         await loadNextPages();
 
         // Evita recargar el PDF por cambios mínimos de tamaño en móviles
@@ -218,6 +258,7 @@
     }
 
     document.addEventListener("DOMContentLoaded", loadPdf);
+
   </script>
 </body>
 
