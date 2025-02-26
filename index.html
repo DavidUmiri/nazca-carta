@@ -30,6 +30,8 @@
       display: block;
       margin: 0;
       padding: 0;
+      width: 100% !important;
+      /* Asegura que el canvas ocupe todo el ancho disponible */
     }
 
     /* Ocultar scrollbar en WebKit */
@@ -64,7 +66,7 @@
       throw new Error('No se encontró el contenedor para el PDF');
     }
 
-    const pagesToLoad = 3; // Carga una página a la vez para acelerar la carga inicial
+    const pagesToLoad = 2; // Carga dos páginas a la vez para equilibrar rendimiento y experiencia
     let pdfDocument = null;
     let currentPageNumber = 1;
     let isLoadingPdf = false;
@@ -76,8 +78,18 @@
       if (!pdfDocument || pageNumber > pdfDocument.numPages) return;
 
       const page = await pdfDocument.getPage(pageNumber);
-      // En móviles forzamos una escala reducida (0.5) para mejorar el rendimiento
-      const scaleFactor = isMobile() ? 1 : (window.devicePixelRatio || 1);
+
+      // Mejoramos la calidad en dispositivos móviles
+      const pixelRatio = window.devicePixelRatio || 1;
+      const isMobileDevice = isMobile();
+
+      // Usamos un factor de escala mayor para móviles para mejorar la calidad
+      // 2.0 para móviles con alta densidad de píxeles, 1.5 para móviles normales
+      const mobileScaleFactor = pixelRatio >= 2 ? 2.0 : 1.5;
+
+      // Aplicamos el factor de escala adecuado según el dispositivo
+      const scaleFactor = isMobileDevice ? mobileScaleFactor : pixelRatio;
+
       const baseViewport = page.getViewport({ scale: 1 });
       const scale = (pdfContainer.clientWidth / baseViewport.width) * scaleFactor;
       const viewport = page.getViewport({ scale });
@@ -86,8 +98,11 @@
       canvas.setAttribute('data-page-number', pageNumber);
       const context = canvas.getContext('2d', { alpha: false });
 
+      // Configuramos el tamaño del canvas para alta resolución
       canvas.width = viewport.width;
       canvas.height = viewport.height;
+
+      // Ajustamos el tamaño visual del canvas
       canvas.style.width = `${viewport.width / scaleFactor}px`;
       canvas.style.height = `${viewport.height / scaleFactor}px`;
 
@@ -111,8 +126,10 @@
       }
 
       const canvas = await renderPage(pageNumber);
-      pageCache.set(pageNumber, canvas);
-      pdfContainer.appendChild(canvas);
+      if (canvas) {
+        pageCache.set(pageNumber, canvas);
+        pdfContainer.appendChild(canvas);
+      }
     }
 
     async function loadNextPages() {
@@ -155,13 +172,16 @@
         if (lastEntry.isIntersecting && !isLoadingPdf) {
           loadNextPages();
         }
-      }, { root: null, rootMargin: '5000px', threshold: 0.01 });
+      }, { root: null, rootMargin: '300px', threshold: 0.01 });
 
       observer.observe(endMarker);
     }
 
     async function loadPdf() {
       try {
+        // Configuración de worker para PDF.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+
         pdfDocument = await pdfjsLib.getDocument(pdfUrl).promise;
         await loadNextPages();
 
@@ -180,6 +200,8 @@
 
       } catch (error) {
         console.error('Error al cargar el PDF:', error);
+        // Mostrar mensaje de error al usuario
+        pdfContainer.innerHTML = '<div style="padding: 20px; text-align: center;">Error al cargar el menú. Por favor, intente nuevamente.</div>';
       }
     }
 
@@ -196,7 +218,6 @@
     }
 
     document.addEventListener("DOMContentLoaded", loadPdf);
-
   </script>
 </body>
 
